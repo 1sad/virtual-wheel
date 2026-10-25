@@ -15,18 +15,6 @@ Grab `VirtualWheel.exe` from
 Install vJoy from
 [BrunnerInnovation vJoy](https://github.com/BrunnerInnovation/vJoy/releases)
 
-## Requirements
-
-- Windows 10 or 11, 64-bit
-- [BrunnerInnovation vJoy](https://github.com/BrunnerInnovation/vJoy/releases)
-  installed, with `C:\Program Files\vJoy\x64\vJoyInterface.dll` present
-- vJoy Device 1 configured with the axes and force feedback effects listed below
-- An XInput controller (Xbox, or anything that has an XInput mode)
-
-The stock vJoy driver will not work. This app needs the Brunner fork, because it
-uses the force feedback callback exports (`FfbRegisterGenCB`, `FfbStart`,
-`FfbStop`, and the report layout) that the stock driver does not have.
-
 ## Setting up vJoy
 
 ### 1. Install the driver
@@ -43,36 +31,33 @@ the stock driver on top of this one.
 Open `C:\Program Files\vJoy\x64\vJoyConf.exe`, or search for **vJoyConf** in the
 Start menu. Select **vJoy Device 1** and set it up like this:
 
-| Setting | Value |
-|---|---|
-| Axes | X, Y, Z, Rx, Ry checked. Leave the rest unchecked. |
-| Number of Buttons | 18, or 32 if another app needs the extras |
-| POV Hat Switch | 0 POVs, Continuous |
-| Force Feedback | Enable Effects checked |
-| FFB effects | Constant, Ramp, Square, Sine, Triangle, Sawtooth Up, Sawtooth Down, Spring, Damper, Inertia, Friction all checked |
-
 ![vJoyConf Device 1](docs/vjoyconf.png)
 
-Click **Apply** when you are done. The screenshot shows 32 buttons. The app only
-uses buttons 1 to 18, so 18 is enough. POVs must stay at 0 because the D-pad is
-sent as buttons 11 to 14.
+Click **Apply** when you are done. 
 
 You can also do this from a command prompt:
 
 ```powershell
-& "C:\Program Files\vJoy\x64\vJoyConfig.exe" 1 -f -a X Y Z Rx Ry -b 18 -e all
+& "C:\Program Files\vJoy\x64\vJoyConfig.exe" 1 -f -a X Y Z Rx Ry -b 32 -e all
 ```
 
 ## Start
 
-Default settings should be alright. Press "Start Virtual Wheel" at the bottom, 
-and move the stick around while looking at the Steering Wheel Angle bar to see what they do.
+Default settings should be alright. 
+
+Press "Start Virtual Wheel" at the bottom, and move the stick around 
+while looking at the Steering Wheel Angle bar to see what they do.
 
 The status bar at the bottom tells you if vJoy was acquired and whether FFB is
 coming in.
 
 The "Bind deconflict" tickbox activates a 1.5 second delay for the outputs,
 lets you bind in games that fight for inputs. Lasts 60 seconds then turns off.
+
+
+
+
+## In-depth explanations
 
 ### Steering mode
 

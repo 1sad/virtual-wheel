@@ -1,0 +1,273 @@
+# Virtual Wheel
+
+Virtual Wheel makes an Xbox-style controller work like a steering wheel. It reads
+the controller with XInput, feeds a vJoy virtual wheel to the game, and converts
+the game's force feedback into rumble on the controller.
+
+It is meant for racing games and emulators that only accept a wheel, or where
+steering with a stick feels wrong.
+
+![Virtual Wheel](docs/virtual-wheel-ui.png)
+
+## What it does
+
+- Maps the left stick to a virtual wheel. Two steering modes: a gate arc that
+  behaves like a wheel with a physical lock, or a plain X axis.
+- Turns DirectInput force feedback into heavy and light rumble motors, with
+  separate gain for each.
+- Shows what is going on while you drive: the gate, the steering curve, wheel
+  angle, throttle/brake/FFB bars, and a live controller view.
+- Keeps the D-pad, face buttons, bumpers and right stick working as buttons on
+  the vJoy device.
+- Sits in the tray and drops to a low refresh rate when the window is not in
+  front, so it does not eat CPU while you are in the game.
+
+## Download
+
+Grab `VirtualWheel.exe` from
+[Releases](https://github.com/1sad/virtual-wheel/releases/latest). It is a single
+file and includes Python, Tk, XInput, and the tray icon libraries. You do not
+need Python installed.
+
+The one thing it does not include is the vJoy driver. Install that first, from
+the section below.
+
+## Requirements
+
+- Windows 10 or 11, 64-bit
+- [BrunnerInnovation vJoy](https://github.com/BrunnerInnovation/vJoy/releases)
+  installed, with `C:\Program Files\vJoy\x64\vJoyInterface.dll` present
+- vJoy Device 1 configured with the axes and force feedback effects listed below
+- An XInput controller (Xbox, or anything that has an XInput mode)
+
+The stock vJoy driver will not work. This app needs the Brunner fork, because it
+uses the force feedback callback exports (`FfbRegisterGenCB`, `FfbStart`,
+`FfbStop`, and the report layout) that the stock driver does not have.
+
+## Setting up vJoy
+
+### 1. Install the driver
+
+Download the latest release from
+[github.com/BrunnerInnovation/vJoy/releases](https://github.com/BrunnerInnovation/vJoy/releases)
+and run the installer. It will ask for administrator rights. Reboot if it asks.
+
+If you already have the old stock vJoy installed, remove it first. Do not install
+the stock driver on top of this one.
+
+### 2. Create Device 1
+
+Open `C:\Program Files\vJoy\x64\vJoyConf.exe`, or search for **vJoyConf** in the
+Start menu. Select **vJoy Device 1** and set it up like this:
+
+| Setting | Value |
+|---|---|
+| Axes | X, Y, Z, Rx, Ry checked. Leave the rest unchecked. |
+| Number of Buttons | 18, or 32 if another app needs the extras |
+| POV Hat Switch | 0 POVs, Continuous |
+| Force Feedback | Enable Effects checked |
+| FFB effects | Constant, Ramp, Square, Sine, Triangle, Sawtooth Up, Sawtooth Down, Spring, Damper, Inertia, Friction all checked |
+
+![vJoyConf Device 1](docs/vjoyconf.png)
+
+Click **Apply** when you are done. The screenshot shows 32 buttons. The app only
+uses buttons 1 to 18, so 18 is enough. POVs must stay at 0 because the D-pad is
+sent as buttons 11 to 14.
+
+You can also do this from a command prompt:
+
+```powershell
+& "C:\Program Files\vJoy\x64\vJoyConfig.exe" 1 -f -a X Y Z Rx Ry -b 18 -e all
+```
+
+### 3. Check that vJoy sees the device
+
+In vJoyConf, the device tab should show as active. If the app later says the
+device is missing or busy, that is where to look.
+
+## Running it
+
+1. Install the vJoy driver and create Device 1.
+2. Plug in the controller and make sure it is in XInput mode.
+3. Run `VirtualWheel.exe`.
+4. Pick the controller slot, or leave **Auto-Detect**.
+5. Pick a steering mode and an FFB source. **DirectInput Rich** is the one to
+   start with.
+6. Click **Start Virtual Wheel**.
+7. In the game's controller settings, choose the vJoy device as the wheel and
+   turn force feedback on for it.
+8. Click **Save Settings** once the tuning feels right.
+
+The status bar at the bottom tells you if vJoy was acquired and whether FFB is
+coming in.
+
+## The controls
+
+### Steering mode
+
+**Gate Arc (Polar) Mode** treats the wheel as if it had a physical gate. The
+stick position is converted to an angle, and the wheel can only travel as far as
+**Max gate arc** allows. The anti-whip settings shape what happens at the end of
+the travel.
+
+**Standard X-Axis Mode** is the simple one. Left and right on the stick becomes
+left and right on the wheel, scaled by the deadzone and gamma settings.
+
+### Gate and anti-whip
+
+- **Max gate arc** is how far the virtual wheel turns, in degrees.
+- **Anti-whip slice** is the part of the gate at the bottom where the stick is
+  being pulled back toward centre, so the wheel can be corrected without
+  snapping.
+- **Whip inner radius** is the radius inside the gate where the stick is treated
+  as centred.
+- **Smart anti-whip clamp** stops the anti-whip zone from fighting a real
+  counter-steer.
+- **Radial blend** blends the return-to-centre behaviour in gradually instead of
+  switching it on at the edge.
+
+The gate canvas shows all of this live: the cyan ring is the gate, the purple
+wedge is the anti-whip zone, and the orange dot is the stick.
+
+### Steering response
+
+- **Gamma curve** changes how much of the stick travel maps to the first part of
+  the wheel range. Above 1 makes small inputs finer.
+- **Speed limit** limits how fast the virtual wheel can move per update.
+- **Center deadzone** is the area around the stick centre that is ignored.
+
+### FFB to rumble
+
+The game sends force feedback to the vJoy wheel. The app parses those reports and
+splits the result into a heavy motor and a light motor.
+
+- **Heavy motor ceiling** and **Light motor ceiling** scale each motor. Keep them
+  low to start with, since strong FFB on a small controller gets uncomfortable
+  fast.
+- **Test Heavy** and **Test Light** pulse each motor so you can check the wiring
+  without starting a game.
+- **Capture FFB 10s** writes every raw packet to a log file next to
+  `settings.ini`. That is what to attach to a bug report if a game's FFB is not
+  working.
+
+### FFB source
+
+| Source | When to use it |
+|---|---|
+| **DirectInput Rich** | Start here. Tracks each effect block, start/stop, duration, start delay, condition effects, periodic effects, ramp, gain and direction. Works with AC1, ACC, LMU, and most DirectInput wheels. |
+| **DirectInput Universal** | Generic fallback. Sums the active X-axis load effects and falls back to periodic effects when there is no load block. |
+| **DirectInput Cartesian** | Old signed constant-force passthrough. Kept for testing. |
+| **DirectInput Polar** | Old polar-direction sign passthrough. Kept for testing. |
+| **Assetto Corsa Shared Memory** | AC1 only. Reads `finalFF` from `Local\acpmf_physics`. Implemented but not tested against a live AC1 session in this release. Do not use it for ACC. |
+
+The vJoy wheel has one force feedback axis. Windows often sends a default polar
+direction (usually 90 degrees) even for effects that are really on the X axis, so
+the app projects single-axis effects onto X. If both axes are enabled in the
+report, the direction is used as sent. Condition effects pick X or Y themselves.
+
+### Window and tray
+
+The window is resizable and sizes itself to fit above the taskbar. It is DPI
+aware, so 125% and 150% desktops and RDP sessions lay out correctly.
+
+Refresh rates:
+
+- About 30 FPS while the window is in the foreground.
+- 5 FPS after two seconds in the background.
+- No drawing at all while minimized or hidden in the tray.
+
+The tray icon is always there. Its menu has **Show Virtual Wheel**, **Hide to
+tray**, **Minimize to tray on minimize** (saved in `settings.ini`), and **Exit**.
+Closing the window with the X button quits the app.
+
+### Settings
+
+Settings are written to `settings.ini` next to the EXE. If that folder is
+read-only, for example when the EXE sits in `Program Files`, the app uses
+`%APPDATA%\VirtualWheel\settings.ini` instead. A source run keeps using the
+`settings.ini` beside the script.
+
+## Games
+
+| Game | Input | FFB | Notes |
+|---|---|---|---|
+| Assetto Corsa (AC1) | Works | Works | All five FFB sources work. In testing they felt the same. Use DirectInput Rich. |
+| Assetto Corsa Competizione | Works | Likely | Use DirectInput Rich. ACC's shared memory value is not the AC1 field, so the AC1 source does not apply. |
+| Le Mans Ultimate | Works | Works | Use DirectInput Rich and set **Use Constant Steering Force Effect = On**. See below. |
+| rFactor 2 | Expected | Not tested | Try DirectInput Rich and the same constant force setting as LMU. |
+| Automobilista 2 | Expected | Not tested | Use a Generic or Generic Direct Drive wheel profile. During calibration, hold the stick where you want the lock angle when you click Next. |
+| PCSX2 / Gran Turismo 4 | Expected | Not tested | Pick a Logitech Driving Force Pro in PCSX2 and point its force feedback at the vJoy device. |
+
+"Input" means the virtual wheel axes and buttons work. "FFB" means rumble was
+actually tested in the game.
+
+### LMU and constant steering force
+
+The usual LMU community advice is to set **Use Constant Steering Force Effect =
+Off**. This app currently needs it **On**, otherwise LMU's FFB can be silent. It
+is a parser limitation, not a tuning problem. If you want to help, set it to Off,
+click **Capture FFB 10s** while driving, and attach the log to an issue.
+
+## Known issues
+
+- LMU needs **Use Constant Steering Force Effect = On** in this release.
+- The AC1 shared memory source has not been tested with AC1 actually running.
+- rFactor 2, AMS2 and PCSX2 / GT4 force feedback are untested.
+- All five FFB sources are kept for now. More sim testing is needed before
+  removing any of them.
+- Resizing the window can feel laggy. The canvases reflow during the drag, but
+  they are throttled, so it is not instant on a big window.
+- The controller button labels can sit about a pixel off centre at some sizes,
+  because Tk rounds the text box and the oval separately.
+- Under heavy GPU load the window can redraw in chunks and dragging can stutter.
+  That looks like Windows compositing fighting with Tk, not FFB work.
+- Restoring a minimized window used to show a black frame. The app repaints on
+  map now. If you still see it, open an issue with your GPU and driver version.
+
+## Troubleshooting
+
+- **vJoy Device 1 is busy.** Something else owns the device. Close other vJoy
+  clients and restart the app. Only one program can own it at a time.
+- **vJoy Device 1 is missing.** Create Device 1 in vJoyConf with the settings
+  above.
+- **No FFB in LMU.** Set **Use Constant Steering Force Effect = On**.
+- **No FFB in another game.** Switch to **DirectInput Rich**, check that the game
+  is sending FFB to the vJoy device, and look at the FFB health line for the
+  packet rate and active block count.
+- **Controller not detected.** The app uses XInput only. Put the controller in
+  XInput mode, not DirectInput or PlayStation mode.
+- **Settings do not save.** The folder with the EXE is probably read-only. The
+  app falls back to `%APPDATA%\VirtualWheel\settings.ini`.
+- **No tray icon when running from source.** Install the runtime packages with
+  `python -m pip install -r requirements.txt`. The EXE already has them.
+
+## Building from source
+
+You need 64-bit Python 3.15 or newer.
+
+```powershell
+python -m pip install -r requirements.txt
+python virtual_wheel_vjoy.py
+```
+
+To build the EXE:
+
+```powershell
+.\build_exe.ps1
+```
+
+That installs the pinned build dependencies and writes `dist\VirtualWheel.exe`.
+PyInstaller runs with `--onefile --noconsole` and embeds
+`assets/virtual_wheel.ico` as the executable icon. The vJoy driver is never
+bundled.
+
+The icon is generated from the same gate drawing the app uses for its window and
+tray icons:
+
+```powershell
+python tools\make_icon.py
+```
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).

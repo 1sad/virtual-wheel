@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.spec
+build/
+dist/
+ffb_capture_*.log
+.venv/
+
+# Local development log, not part of the published repo
+PROGRESS.md

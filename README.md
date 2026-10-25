@@ -4,8 +4,7 @@ Virtual Wheel makes an Xbox-style controller work like a steering wheel. It read
 the controller with XInput, feeds a vJoy virtual wheel to the game, and converts
 the game's force feedback into rumble on the controller.
 
-It is meant for racing games and emulators that only accept a wheel, or where
-steering with a stick feels wrong.
+Gives you a way better and more intuitive control and feedback.
 
 ![Virtual Wheel](docs/virtual-wheel-ui.png)
 

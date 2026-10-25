@@ -8,28 +8,12 @@ Gives you a way better and more intuitive control and feedback.
 
 ![Virtual Wheel](docs/virtual-wheel-ui.png)
 
-## What it does
-
-- Maps the left stick to a virtual wheel. Two steering modes: a gate arc that
-  behaves like a wheel with a physical lock, or a plain X axis.
-- Turns DirectInput force feedback into heavy and light rumble motors, with
-  separate gain for each.
-- Shows what is going on while you drive: the gate, the steering curve, wheel
-  angle, throttle/brake/FFB bars, and a live controller view.
-- Keeps the D-pad, face buttons, bumpers and right stick working as buttons on
-  the vJoy device.
-- Sits in the tray and drops to a low refresh rate when the window is not in
-  front, so it does not eat CPU while you are in the game.
-
 ## Download
 
 Grab `VirtualWheel.exe` from
-[Releases](https://github.com/1sad/virtual-wheel/releases/latest). It is a single
-file and includes Python, Tk, XInput, and the tray icon libraries. You do not
-need Python installed.
-
-The one thing it does not include is the vJoy driver. Install that first, from
-the section below.
+[Releases](https://github.com/1sad/virtual-wheel/releases/latest). 
+Install vJoy from
+[BrunnerInnovation vJoy](https://github.com/BrunnerInnovation/vJoy/releases)
 
 ## Requirements
 
@@ -79,28 +63,13 @@ You can also do this from a command prompt:
 & "C:\Program Files\vJoy\x64\vJoyConfig.exe" 1 -f -a X Y Z Rx Ry -b 18 -e all
 ```
 
-### 3. Check that vJoy sees the device
+## Start
 
-In vJoyConf, the device tab should show as active. If the app later says the
-device is missing or busy, that is where to look.
-
-## Running it
-
-1. Install the vJoy driver and create Device 1.
-2. Plug in the controller and make sure it is in XInput mode.
-3. Run `VirtualWheel.exe`.
-4. Pick the controller slot, or leave **Auto-Detect**.
-5. Pick a steering mode and an FFB source. **DirectInput Rich** is the one to
-   start with.
-6. Click **Start Virtual Wheel**.
-7. In the game's controller settings, choose the vJoy device as the wheel and
-   turn force feedback on for it.
-8. Click **Save Settings** once the tuning feels right.
+Default settings should be alright. Press "Start Virtual Wheel" at the bottom, 
+and move the stick around while looking at the Steering Wheel Angle bar to see what they do.
 
 The status bar at the bottom tells you if vJoy was acquired and whether FFB is
 coming in.
-
-## The controls
 
 ### Steering mode
 
@@ -153,7 +122,7 @@ splits the result into a heavy motor and a light motor.
 
 | Source | When to use it |
 |---|---|
-| **DirectInput Rich** | Start here. Tracks each effect block, start/stop, duration, start delay, condition effects, periodic effects, ramp, gain and direction. Works with AC1, ACC, LMU, and most DirectInput wheels. |
+| **DirectInput Rich** | Start here. Tracks each effect block, start/stop, duration, start delay, condition effects, periodic effects, ramp, gain and direction. Works with AC1, ACC, LMU. |
 | **DirectInput Universal** | Generic fallback. Sums the active X-axis load effects and falls back to periodic effects when there is no load block. |
 | **DirectInput Cartesian** | Old signed constant-force passthrough. Kept for testing. |
 | **DirectInput Polar** | Old polar-direction sign passthrough. Kept for testing. |

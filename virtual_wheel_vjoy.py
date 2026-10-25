@@ -1634,7 +1634,7 @@ class UniversalWheelApp:
             "DirectInput Polar",
             "Assetto Corsa Shared Memory"
         ], state="readonly", width=19)
-        self.ffb_source_combo.current(0)
+        self.ffb_source_combo.current(1)
         self.ffb_source_combo.grid(row=3, column=1, padx=(6, 0), pady=(2, 0), sticky="ew")
         self.ffb_source_combo.bind("<<ComboboxSelected>>", self._on_ffb_source_change)
 
@@ -1652,31 +1652,31 @@ class UniversalWheelApp:
         gate_frame.pack(fill="x", pady=(0, 4))
 
         ttk.Label(gate_frame, text="Max gate arc:", style="Small.TLabel").grid(row=0, column=0, sticky="w")
-        self.max_arc_var = tk.DoubleVar(value=140.0)
+        self.max_arc_var = tk.DoubleVar(value=165.0)
         self.max_arc_slider = ttk.Scale(gate_frame, from_=90.0, to=180.0, variable=self.max_arc_var, command=self._on_slider_change)
         self.max_arc_slider.grid(row=0, column=1, sticky="ew", padx=6)
-        self.max_arc_label = ttk.Label(gate_frame, text="140\u00b0", style="Small.TLabel", width=4, anchor="e")
+        self.max_arc_label = ttk.Label(gate_frame, text="165\u00b0", style="Small.TLabel", width=4, anchor="e")
         self.max_arc_label.grid(row=0, column=2)
 
         ttk.Label(gate_frame, text="Anti-whip slice:", style="Small.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.whip_width_var = tk.DoubleVar(value=30.0)
+        self.whip_width_var = tk.DoubleVar(value=60.0)
         self.whip_width_slider = ttk.Scale(gate_frame, from_=0.0, to=180.0, variable=self.whip_width_var, command=self._on_slider_change)
         self.whip_width_slider.grid(row=1, column=1, sticky="ew", padx=6, pady=(2, 0))
-        self.whip_width_label = ttk.Label(gate_frame, text="30\u00b0", style="Small.TLabel", width=4, anchor="e")
+        self.whip_width_label = ttk.Label(gate_frame, text="60\u00b0", style="Small.TLabel", width=4, anchor="e")
         self.whip_width_label.grid(row=1, column=2, pady=(2, 0))
 
         ttk.Label(gate_frame, text="Whip inner radius:", style="Small.TLabel").grid(row=2, column=0, sticky="w", pady=(2, 0))
-        self.whip_radius_var = tk.DoubleVar(value=0.50)
+        self.whip_radius_var = tk.DoubleVar(value=0.00)
         self.whip_radius_slider = ttk.Scale(gate_frame, from_=0.00, to=1.00, variable=self.whip_radius_var, command=self._on_slider_change)
         self.whip_radius_slider.grid(row=2, column=1, sticky="ew", padx=6, pady=(2, 0))
-        self.whip_radius_label = ttk.Label(gate_frame, text="0.50", style="Small.TLabel", width=4, anchor="e")
+        self.whip_radius_label = ttk.Label(gate_frame, text="0.00", style="Small.TLabel", width=4, anchor="e")
         self.whip_radius_label.grid(row=2, column=2, pady=(2, 0))
 
         self.anti_whip_var = tk.BooleanVar(value=True)
         self.anti_whip_check = ttk.Checkbutton(gate_frame, text="Smart anti-whip clamp (no lock jump)", variable=self.anti_whip_var, command=self._on_slider_change)
         self.anti_whip_check.grid(row=3, column=0, columnspan=3, sticky="w", pady=(3, 0))
 
-        self.radial_blend_var = tk.BooleanVar(value=False)
+        self.radial_blend_var = tk.BooleanVar(value=True)
         self.radial_blend_check = ttk.Checkbutton(gate_frame, text="Radial blend (return-to-center)", variable=self.radial_blend_var, command=self._on_slider_change)
         self.radial_blend_check.grid(row=4, column=0, columnspan=3, sticky="w", pady=(1, 0))
 
@@ -1687,24 +1687,24 @@ class UniversalWheelApp:
         steer_frame.pack(fill="x", pady=(0, 4))
 
         ttk.Label(steer_frame, text="Gamma curve:", style="Small.TLabel").grid(row=0, column=0, sticky="w")
-        self.gamma_var = tk.DoubleVar(value=2.0)
-        self.gamma_slider = ttk.Scale(steer_frame, from_=1.0, to=4.0, variable=self.gamma_var, command=self._on_slider_change)
+        self.gamma_var = tk.DoubleVar(value=1.30)
+        self.gamma_slider = ttk.Scale(steer_frame, from_=1.0, to=2.5, variable=self.gamma_var, command=self._on_slider_change)
         self.gamma_slider.grid(row=0, column=1, sticky="ew", padx=6)
-        self.gamma_label = ttk.Label(steer_frame, text="2.00", style="Small.TLabel", width=4, anchor="e")
+        self.gamma_label = ttk.Label(steer_frame, text="1.30", style="Small.TLabel", width=4, anchor="e")
         self.gamma_label.grid(row=0, column=2)
 
         ttk.Label(steer_frame, text="Speed limit:", style="Small.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.speed_var = tk.DoubleVar(value=0.08)
+        self.speed_var = tk.DoubleVar(value=0.15)
         self.speed_slider = ttk.Scale(steer_frame, from_=0.01, to=0.30, variable=self.speed_var, command=self._on_slider_change)
         self.speed_slider.grid(row=1, column=1, sticky="ew", padx=6, pady=(2, 0))
-        self.speed_label = ttk.Label(steer_frame, text="0.08", style="Small.TLabel", width=4, anchor="e")
+        self.speed_label = ttk.Label(steer_frame, text="0.15", style="Small.TLabel", width=4, anchor="e")
         self.speed_label.grid(row=1, column=2, pady=(2, 0))
 
         ttk.Label(steer_frame, text="Center deadzone:", style="Small.TLabel").grid(row=2, column=0, sticky="w", pady=(2, 0))
-        self.deadzone_var = tk.DoubleVar(value=0.05)
+        self.deadzone_var = tk.DoubleVar(value=0.15)
         self.deadzone_slider = ttk.Scale(steer_frame, from_=0.00, to=1.00, variable=self.deadzone_var, command=self._on_slider_change)
         self.deadzone_slider.grid(row=2, column=1, sticky="ew", padx=6, pady=(2, 0))
-        self.deadzone_label = ttk.Label(steer_frame, text="0.05", style="Small.TLabel", width=4, anchor="e")
+        self.deadzone_label = ttk.Label(steer_frame, text="0.15", style="Small.TLabel", width=4, anchor="e")
         self.deadzone_label.grid(row=2, column=2, pady=(2, 0))
         steer_frame.columnconfigure(1, weight=1)
 
@@ -1713,17 +1713,17 @@ class UniversalWheelApp:
         ffb_frame.pack(fill="x", pady=(0, 0))
 
         ttk.Label(ffb_frame, text="Heavy motor ceiling:", style="Small.TLabel").grid(row=0, column=0, sticky="w")
-        self.heavy_gain_var = tk.DoubleVar(value=1.0)
+        self.heavy_gain_var = tk.DoubleVar(value=0.10)
         self.heavy_gain_slider = ttk.Scale(ffb_frame, from_=0.0, to=1.0, variable=self.heavy_gain_var, command=self._on_slider_change)
         self.heavy_gain_slider.grid(row=0, column=1, sticky="ew", padx=6)
-        self.heavy_gain_label = ttk.Label(ffb_frame, text="100%", style="Small.TLabel", width=4, anchor="e")
+        self.heavy_gain_label = ttk.Label(ffb_frame, text="10%", style="Small.TLabel", width=4, anchor="e")
         self.heavy_gain_label.grid(row=0, column=2)
 
         ttk.Label(ffb_frame, text="Light motor ceiling:", style="Small.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.light_gain_var = tk.DoubleVar(value=1.0)
+        self.light_gain_var = tk.DoubleVar(value=0.50)
         self.light_gain_slider = ttk.Scale(ffb_frame, from_=0.0, to=1.0, variable=self.light_gain_var, command=self._on_slider_change)
         self.light_gain_slider.grid(row=1, column=1, sticky="ew", padx=6, pady=(2, 0))
-        self.light_gain_label = ttk.Label(ffb_frame, text="100%", style="Small.TLabel", width=4, anchor="e")
+        self.light_gain_label = ttk.Label(ffb_frame, text="50%", style="Small.TLabel", width=4, anchor="e")
         self.light_gain_label.grid(row=1, column=2, pady=(2, 0))
 
         test_btn_box = ttk.Frame(ffb_frame)
@@ -1969,16 +1969,16 @@ class UniversalWheelApp:
             set_combo(self.polling_combo, "polling_rate")
             set_combo(self.ffb_source_combo, "ffb_source")
 
-            self.max_arc_var.set(get_float("max_arc", 140.0, 90.0, 180.0))
-            self.whip_width_var.set(get_float("whip_width", 30.0, 0.0, 180.0))
-            self.whip_radius_var.set(get_float("whip_radius", 0.50, 0.0, 1.0))
+            self.max_arc_var.set(get_float("max_arc", 165.0, 90.0, 180.0))
+            self.whip_width_var.set(get_float("whip_width", 60.0, 0.0, 180.0))
+            self.whip_radius_var.set(get_float("whip_radius", 0.00, 0.0, 1.0))
             self.anti_whip_var.set(get_bool("anti_whip_enabled", True))
-            self.radial_blend_var.set(get_bool("radial_blend_enabled", False))
-            self.gamma_var.set(get_float("gamma", 2.0, 1.0, 4.0))
-            self.speed_var.set(get_float("speed_limit", 0.08, 0.01, 0.30))
-            self.deadzone_var.set(get_float("deadzone", 0.05, 0.0, 0.95))
-            self.heavy_gain_var.set(get_float("heavy_gain", 1.0, 0.0, 1.0))
-            self.light_gain_var.set(get_float("light_gain", 1.0, 0.0, 1.0))
+            self.radial_blend_var.set(get_bool("radial_blend_enabled", True))
+            self.gamma_var.set(get_float("gamma", 1.30, 1.0, 2.5))
+            self.speed_var.set(get_float("speed_limit", 0.15, 0.01, 0.30))
+            self.deadzone_var.set(get_float("deadzone", 0.15, 0.0, 0.95))
+            self.heavy_gain_var.set(get_float("heavy_gain", 0.10, 0.0, 1.0))
+            self.light_gain_var.set(get_float("light_gain", 0.50, 0.0, 1.0))
             self.invert_throttle_var.set(get_bool("invert_throttle", False))
             self.invert_brake_var.set(get_bool("invert_brake", False))
             self.rs_buttons_var.set(get_bool("rs_buttons_enabled", True))
@@ -2013,7 +2013,7 @@ class UniversalWheelApp:
                 "whip_radius": clamp(self.whip_radius_var.get(), 0.0, 1.0),
                 "anti_whip": bool(self.anti_whip_var.get()),
                 "radial_blend": bool(self.radial_blend_var.get()),
-                "gamma": clamp(self.gamma_var.get(), 1.0, 4.0),
+                "gamma": clamp(self.gamma_var.get(), 1.0, 2.5),
                 "speed_limit": clamp(self.speed_var.get(), 0.01, 0.30),
                 "deadzone": clamp(self.deadzone_var.get(), 0.0, 0.95),
                 "heavy_gain": clamp(self.heavy_gain_var.get(), 0.0, 1.0),
@@ -2775,7 +2775,13 @@ class UniversalWheelApp:
             c.itemconfigure(text_id, fill="#101010" if active else color)
 
     def _on_slider_change(self, _=None):
-        self.gamma_label.config(text=f"{self.gamma_var.get():.2f}")
+        # ttk.Scale is continuous, so a 1.0-2.5 range spread over a few hundred
+        # pixels jumps in uneven steps and is hard to land on an exact value.
+        # Snap gamma to 0.01 so 1.30 is actually reachable.
+        gamma = round(self.gamma_var.get() * 100.0) / 100.0
+        if abs(gamma - self.gamma_var.get()) > 1e-9:
+            self.gamma_var.set(gamma)
+        self.gamma_label.config(text=f"{gamma:.2f}")
         self.speed_label.config(text=f"{self.speed_var.get():.2f}")
         self.deadzone_label.config(text=f"{self.deadzone_var.get():.2f}")
         self.max_arc_label.config(text=f"{int(self.max_arc_var.get())}°")
@@ -3215,7 +3221,7 @@ class UniversalWheelApp:
         if now < self.test_rumble_until:
             return self.test_heavy_val, self.test_light_val
 
-        source = cfg.get("ffb_source", "DirectInput Universal")
+        source = cfg.get("ffb_source", "DirectInput Rich")
         if "Assetto Corsa" in source:
             self.current_ffb_torque = self._read_ac_ffb(now)
         else:

@@ -71,6 +71,9 @@ and move the stick around while looking at the Steering Wheel Angle bar to see w
 The status bar at the bottom tells you if vJoy was acquired and whether FFB is
 coming in.
 
+The "Bind deconflict" tickbox activates a 1.5 second delay for the outputs,
+lets you bind in games that fight for inputs. Lasts 60 seconds then turns off.
+
 ### Steering mode
 
 **Gate Arc (Polar) Mode** treats the wheel as if it had a physical gate. The

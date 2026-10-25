@@ -54,8 +54,7 @@ coming in.
 The "Bind deconflict" tickbox activates a 1.5 second delay for the outputs,
 lets you bind in games that fight for inputs. Lasts 60 seconds then turns off.
 
-
-
+"Right stick buttons" create virtual buttons that get triggered with the right stick.
 
 ## In-depth explanations
 

@@ -38,6 +38,18 @@ if (-not (Test-Path $exe)) {
     throw "PyInstaller did not produce $exe"
 }
 
+$checker = Join-Path (Split-Path $root -Parent) "repo-guard\check-release.ps1"
+if (Test-Path $checker) {
+    Write-Host ""
+    Write-Host "Scanning dist for leaked personal data..."
+    & $checker -Path "$root\dist"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Artifact scan failed. Do not publish $exe until the findings are fixed."
+    }
+} else {
+    Write-Warning "repo-guard check-release.ps1 not found, skipping artifact scan."
+}
+
 $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host ""
 Write-Host "Built: $exe ($size MB)"

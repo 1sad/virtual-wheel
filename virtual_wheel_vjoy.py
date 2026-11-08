@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, simpledialog
 import math
 import time
 import threading
@@ -12,6 +12,8 @@ import configparser
 import struct
 import shutil
 import traceback
+
+__version__ = "1.1.0"
 
 try:
     import XInput
@@ -244,6 +246,15 @@ ET_INRT = 10
 ET_FRCTN = 11
 ET_CUSTOM = 12
 
+MOTOR_SCENARIOS = (
+    ("Sweep (calibrate the bands)", "sweep"),
+    ("Cornering (steady load)", "cornering"),
+    ("Oversteer (peak then drop)", "oversteer"),
+    ("Curb strikes", "curb"),
+    ("Constant vibration", "vibration"),
+    ("Random vibration", "random"),
+)
+
 FILE_MAP_READ = 0x0004
 TH32CS_SNAPPROCESS = 0x00000002
 
@@ -313,6 +324,95 @@ def _get_work_area():
     except Exception:
         width, height = 1280, 720
     return 0, 0, width, height
+
+
+def motor_band_shape(force, tlo, low, high, thi):
+    """Return 0..1 for a force 0..1 inside one motor's force band.
+
+    The band is a trapezoid. tlo and thi are where the motor starts and
+    stops, low and high are where it reaches full strength. All four are
+    integers 0..100 in the UI and may be equal, so a ramp can start or end
+    exactly at 0 or 100. Zero force is always off, and a band that ends at
+    100 with no taper stays on at 100.
+    """
+    x = max(0.0, min(1.0, float(force)))
+    if x <= 0.0:
+        return 0.0
+    a = max(0.0, min(1.0, float(tlo) / 100.0))
+    b = max(0.0, min(1.0, float(low) / 100.0))
+    c = max(0.0, min(1.0, float(high) / 100.0))
+    d = max(0.0, min(1.0, float(thi) / 100.0))
+    if x < a or x > d:
+        return 0.0
+    if x < b:
+        return (x - a) / max(1e-9, b - a)
+    if x <= c:
+        return 1.0
+    return (d - x) / max(1e-9, d - c)
+
+
+def motor_band_output(force, max_pct, tlo, low, high, thi):
+    """Flat-cap motor response: max strength times the band shape."""
+    shape = motor_band_shape(force, tlo, low, high, thi)
+    if shape <= 0.0:
+        return 0.0
+    strength = max(0.0, min(100.0, float(max_pct))) / 100.0
+    return strength * shape
+
+
+def scenario_force(name, seconds):
+    """Synthetic FFB magnitude 0..1 for the built-in test scenarios."""
+    t = max(0.0, float(seconds))
+    if name == "cornering":
+        value = 0.70 + 0.02 * math.sin(t * 2.2)
+    elif name == "oversteer":
+        cycle = t % 5.0
+        if cycle < 1.1:
+            value = 0.35 + (0.95 - 0.35) * (cycle / 1.1)
+        elif cycle < 1.6:
+            value = 0.95
+        elif cycle < 1.75:
+            value = 0.95 + (0.45 - 0.95) * ((cycle - 1.6) / 0.15)
+        else:
+            value = 0.45 + 0.015 * math.sin(t * 9.0)
+    elif name == "curb":
+        cycle = t % 1.5
+        if cycle < 0.42:
+            u = cycle / 0.42
+            value = (0.42 + 0.34 * abs(math.sin(u * math.pi * 6.0))
+                     * math.sin(u * math.pi))
+        else:
+            value = 0.30 + 0.015 * math.sin(t * 4.0)
+    elif name == "vibration":
+        value = 0.30 + 0.13 * math.sin(t * math.pi * 2.0 * 10.0)
+    elif name == "random":
+        value = (0.45 + 0.17 * math.sin(t * 1.9)
+                 + 0.09 * math.sin(t * 5.1 + 1.2)
+                 + 0.05 * math.sin(t * 10.7 + 0.4))
+    elif name == "sweep":
+        cycle = t % 9.0
+        value = cycle / 4.5 if cycle < 4.5 else (9.0 - cycle) / 4.5
+    else:
+        return 0.0
+    return max(0.0, min(1.0, value))
+
+
+def _mix_hex(color, amount, background="#1b1b1b"):
+    """Blend color toward background. amount 0 is background, 1 is color."""
+    try:
+        fg = color.lstrip("#")
+        bg = background.lstrip("#")
+        fr, fgn, fb = int(fg[0:2], 16), int(fg[2:4], 16), int(fg[4:6], 16)
+        br, bgn, bb = int(bg[0:2], 16), int(bg[2:4], 16), int(bg[4:6], 16)
+        t = max(0.0, min(1.0, float(amount)))
+        return "#%02x%02x%02x" % (
+            int(round(br + (fr - br) * t)),
+            int(round(bgn + (fgn - bgn) * t)),
+            int(round(bb + (fb - bb) * t)),
+        )
+    except Exception:
+        return color
+
 
 
 def _draw_app_icon(size=256):
@@ -669,6 +769,14 @@ class UniversalWheelApp:
         self.test_rumble_until = 0.0
         self.test_heavy_val = 0.0
         self.test_light_val = 0.0
+
+        # Simulated FFB for the manual slider and the built-in scenarios.
+        # Written by the Tk thread, read by the process thread as plain values.
+        self.sim_ffb_enabled = False
+        self.sim_ffb = 0.0
+        self.sim_scenario = None
+        self.sim_scenario_t0 = 0.0
+        self._sim_scale_updating = False
 
         # Bind deconflict mode (1.5 s delay, auto-off after 60 s)
         self.deconflict_mode_var = tk.BooleanVar(value=False)
@@ -1708,31 +1816,65 @@ class UniversalWheelApp:
         self.deadzone_label.grid(row=2, column=2, pady=(2, 0))
         steer_frame.columnconfigure(1, weight=1)
 
-        # DIRECT FFB TO RUMBLE CONFIG & MOTOR INTENSITY
+        # DIRECT FFB TO RUMBLE CONFIG
         ffb_frame = ttk.LabelFrame(left_col, text=" FFB to Rumble Engine ", padding=6)
         ffb_frame.pack(fill="x", pady=(0, 0))
 
-        ttk.Label(ffb_frame, text="Heavy motor ceiling:", style="Small.TLabel").grid(row=0, column=0, sticky="w")
-        self.heavy_gain_var = tk.DoubleVar(value=0.10)
-        self.heavy_gain_slider = ttk.Scale(ffb_frame, from_=0.0, to=1.0, variable=self.heavy_gain_var, command=self._on_slider_change)
-        self.heavy_gain_slider.grid(row=0, column=1, sticky="ew", padx=6)
-        self.heavy_gain_label = ttk.Label(ffb_frame, text="10%", style="Small.TLabel", width=4, anchor="e")
-        self.heavy_gain_label.grid(row=0, column=2)
+        self._motor_vars = {
+            "heavy": {
+                "max": tk.IntVar(value=50),
+                "tlo": tk.IntVar(value=60),
+                "low": tk.IntVar(value=100),
+                "high": tk.IntVar(value=100),
+                "thi": tk.IntVar(value=100),
+            },
+            "light": {
+                "max": tk.IntVar(value=100),
+                "tlo": tk.IntVar(value=0),
+                "low": tk.IntVar(value=100),
+                "high": tk.IntVar(value=100),
+                "thi": tk.IntVar(value=100),
+            },
+        }
+        self._motor_last_max = {"heavy": 50, "light": 100}
+        self._motor_max_text = {
+            "heavy": tk.StringVar(value="50"),
+            "light": tk.StringVar(value="100"),
+        }
+        self._motor_canvas = {}
+        self._motor_spin = {}
+        self._motor_spin_window = {}
+        self._motor_handle_pos = {}
+        self._motor_marker = {}
+        self._motor_geom = {}
+        self._motor_selected = {}
+        self._motor_drag = None
 
-        ttk.Label(ffb_frame, text="Light motor ceiling:", style="Small.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.light_gain_var = tk.DoubleVar(value=0.50)
-        self.light_gain_slider = ttk.Scale(ffb_frame, from_=0.0, to=1.0, variable=self.light_gain_var, command=self._on_slider_change)
-        self.light_gain_slider.grid(row=1, column=1, sticky="ew", padx=6, pady=(2, 0))
-        self.light_gain_label = ttk.Label(ffb_frame, text="50%", style="Small.TLabel", width=4, anchor="e")
-        self.light_gain_label.grid(row=1, column=2, pady=(2, 0))
-
-        test_btn_box = ttk.Frame(ffb_frame)
-        test_btn_box.grid(row=2, column=0, columnspan=3, pady=(4, 0))
-        ttk.Button(test_btn_box, text="Test Heavy", command=lambda: self.pulse_rumble(heavy=True, light=False)).pack(side="left", padx=(0, 4))
-        ttk.Button(test_btn_box, text="Test Light", command=lambda: self.pulse_rumble(heavy=False, light=True)).pack(side="left", padx=(0, 4))
-        self.capture_btn = ttk.Button(test_btn_box, text="Capture FFB 10s", command=self._start_ffb_capture)
-        self.capture_btn.pack(side="left")
-        ffb_frame.columnconfigure(1, weight=1)
+        for key, title, color in (
+                ("heavy", "HEAVY", "#FF9900"),
+                ("light", "LIGHT", "#00CCFF")):
+            canvas = tk.Canvas(ffb_frame, width=285, height=54, bg="#1b1b1b",
+                               highlightthickness=0, bd=0)
+            canvas.pack(fill="x", pady=(2, 2))
+            canvas._vw_motor_key = key
+            canvas._vw_motor_color = color
+            canvas._vw_motor_title = title
+            spin = tk.Spinbox(
+                canvas, from_=0, to=100, width=4,
+                font=("Segoe UI", 7), bg="#303030", fg="#ffffff",
+                insertbackground="#ffffff", bd=0, highlightthickness=0,
+                buttonbackground="#404040", justify="center",
+                textvariable=self._motor_max_text[key],
+                command=lambda k=key: self._on_motor_max_spin(k))
+            spin.bind("<Return>", lambda e, k=key: self._on_motor_max_spin(k))
+            spin.bind("<FocusOut>", lambda e, k=key: self._on_motor_max_spin(k))
+            self._motor_canvas[key] = canvas
+            self._motor_spin[key] = spin
+            canvas.bind("<Configure>", lambda e, k=key: self._draw_motor_curve(k))
+            canvas.bind("<Button-1>", lambda e, k=key: self._on_motor_press(k, e))
+            canvas.bind("<B1-Motion>", lambda e, k=key: self._on_motor_motion(k, e))
+            canvas.bind("<ButtonRelease-1>", lambda e, k=key: self._on_motor_release(k, e))
+            canvas.bind("<Double-Button-1>", lambda e, k=key: self._on_motor_double(k, e))
 
         # ================= RIGHT COLUMN: VISUALIZERS =================
 
@@ -1781,6 +1923,47 @@ class UniversalWheelApp:
         self.heavy_rumble_bar = self._make_telemetry_row(telemetry_box, 3, "Heavy", "#FF9900")
         self.light_rumble_bar = self._make_telemetry_row(telemetry_box, 4, "Light", "#00CCFF")
 
+        self.test_frame = ttk.Frame(telemetry_box)
+        self.test_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+
+        scenario_row = ttk.Frame(self.test_frame)
+        scenario_row.pack(fill="x")
+        self.scenario_combo = ttk.Combobox(
+            scenario_row,
+            values=[label for label, _key in MOTOR_SCENARIOS],
+            state="readonly",
+            width=18)
+        self.scenario_combo.current(0)
+        self.scenario_combo.pack(side="left", fill="x", expand=True)
+        self.scenario_combo.bind("<<ComboboxSelected>>", self._on_scenario_change)
+        self.sim_play_btn = ttk.Button(
+            scenario_row, text="Play", width=5, command=self._toggle_scenario)
+        self.sim_play_btn.pack(side="left", padx=(4, 0))
+
+        test_row = ttk.Frame(self.test_frame)
+        test_row.pack(fill="x", pady=(3, 0))
+        ttk.Button(test_row, text="Test Heavy",
+                   command=lambda: self.pulse_rumble(heavy=True, light=False)).pack(side="left", padx=(0, 3))
+        ttk.Button(test_row, text="Test Light",
+                   command=lambda: self.pulse_rumble(heavy=False, light=True)).pack(side="left", padx=(0, 3))
+        self.capture_btn = ttk.Button(
+            test_row, text="Capture 10s", command=self._start_ffb_capture)
+        self.capture_btn.pack(side="left", fill="x", expand=True)
+
+        sim_row = ttk.Frame(self.test_frame)
+        sim_row.pack(fill="x", pady=(3, 0))
+        ttk.Label(sim_row, text="Sim FFB", style="Small.TLabel").pack(side="left")
+        self.sim_ffb_var = tk.DoubleVar(value=0.0)
+        self.sim_scale = ttk.Scale(
+            sim_row, from_=0.0, to=100.0, length=90, variable=self.sim_ffb_var,
+            command=self._on_sim_slider)
+        self.sim_scale.pack(side="left", fill="x", expand=True, padx=4)
+        self.sim_value_label = ttk.Label(
+            sim_row, text="0%", style="Small.TLabel", width=4, anchor="e")
+        self.sim_value_label.pack(side="left")
+        ttk.Button(sim_row, text="Live", width=4,
+                   command=self._stop_sim).pack(side="left", padx=(4, 0))
+
         self.ffb_health_label = ttk.Label(
             telemetry_box,
             text="FFB idle",
@@ -1789,7 +1972,7 @@ class UniversalWheelApp:
             wraplength=220,
             justify="left"
         )
-        self.ffb_health_label.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(3, 0))
+        self.ffb_health_label.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(3, 0))
         telemetry_box.bind("<Configure>", self._on_telemetry_resize)
 
         controller_box = ttk.LabelFrame(lower_row, text=" Controller Input ", padding=4)
@@ -1842,6 +2025,8 @@ class UniversalWheelApp:
         self.draw_gate_vis(0.0, 0.0)
         self.draw_wheel_gauge(0.0)
         self.draw_controller_vis({}, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self._draw_motor_curve("heavy")
+        self._draw_motor_curve("light")
 
     def _make_telemetry_row(self, parent, row, label, color, signed=False):
         ttk.Label(parent, text=label, style="Telemetry.TLabel").grid(
@@ -1858,6 +2043,397 @@ class UniversalWheelApp:
         self._ffb_wrap = width
         if hasattr(self, "ffb_health_label"):
             self.ffb_health_label.configure(wraplength=width)
+
+    # ----------------- FFB MOTOR BANDS & TEST INPUT -----------------
+    _MOTOR_INDEX = {"max": 0, "tlo": 1, "low": 2, "high": 3, "thi": 4}
+    _MOTOR_LABELS = {
+        "tlo": "lower start",
+        "low": "lower full",
+        "high": "upper full",
+        "thi": "upper stop",
+        "max": "max strength",
+    }
+
+    def _motor_values(self, key):
+        v = self._motor_vars[key]
+        return (int(v["max"].get()), int(v["tlo"].get()), int(v["low"].get()),
+                int(v["high"].get()), int(v["thi"].get()))
+
+    def _motor_value(self, key, kind):
+        return self._motor_values(key)[self._MOTOR_INDEX[kind]]
+
+    def _motor_clamp(self, key, kind, value):
+        max_pct, tlo, low, high, thi = self._motor_values(key)
+        value = int(round(float(value)))
+        if kind == "tlo":
+            return max(0, min(value, low))
+        if kind == "low":
+            return max(tlo, min(value, high))
+        if kind == "high":
+            return max(low, min(value, thi))
+        if kind == "thi":
+            return max(high, min(value, 100))
+        return max(0, min(value, 100))
+
+    def _draw_motor_curve(self, key):
+        canvas = self._motor_canvas.get(key)
+        if canvas is None:
+            return
+        try:
+            w = int(canvas.winfo_width())
+        except Exception:
+            w = 285
+        if w <= 1:
+            w = 285
+        h = 54
+        L, R, T, B = 6, 24, 21, 8
+        plot_w = max(40, w - L - R)
+        plot_h = max(10, h - T - B)
+        color = canvas._vw_motor_color
+        max_pct, tlo, low, high, thi = self._motor_values(key)
+
+        def X(v):
+            return L + (v / 100.0) * plot_w
+
+        def Y(v):
+            return T + (1.0 - v) * plot_h
+
+        canvas.delete("all")
+        canvas.create_text(L, 1, anchor="nw", text=canvas._vw_motor_title,
+                           fill=color, font=("Segoe UI", 8, "bold"))
+        canvas.create_text(
+            w - 42, 3, anchor="ne",
+            text=f"on {tlo}-{thi}  full {low}-{high}  max",
+            fill="#9a9a9a", font=("Segoe UI", 7))
+
+        for pct in (25, 50, 75):
+            canvas.create_line(X(pct), Y(0), X(pct), Y(1), fill="#2c2c2c")
+            canvas.create_line(X(0), Y(pct / 100.0), X(100), Y(pct / 100.0),
+                               fill="#2c2c2c")
+        canvas.create_line(X(0), Y(0), X(100), Y(0), fill="#3a3a3a")
+        canvas.create_line(X(100), Y(0), X(100), Y(1), fill="#3a3a3a")
+
+        canvas.create_line(X(0), Y(0), X(100), Y(1), fill="#5a2a66")
+        canvas.create_text(X(64) + 3, Y(0.64) - 2, text="1:1", anchor="sw",
+                           fill="#8a4a99", font=("Segoe UI", 6))
+
+        points = []
+        for pct in range(0, 101):
+            out = motor_band_output(pct / 100.0, max_pct, tlo, low, high, thi)
+            points.extend((X(pct), Y(out)))
+        fill_points = list(points)
+        fill_points.extend((X(100), Y(0), X(0), Y(0)))
+        canvas.create_polygon(*fill_points, fill=_mix_hex(color, 0.16),
+                              outline="")
+        canvas.create_line(*points, fill=color, width=2)
+
+        cap_x = X(100) + 14
+        cap_y = Y(max_pct / 100.0)
+        canvas.create_line(X(0), cap_y, cap_x, cap_y, fill=color, dash=(2, 3))
+
+        mag = max(0.0, min(1.0, abs(float(self.telemetry.get("ffb_torque", 0.0)))))
+        marker_x = X(mag * 100.0)
+        marker_y = Y(motor_band_output(
+            mag, max_pct, tlo, low, high, thi))
+        marker_line = canvas.create_line(
+            marker_x, Y(0), marker_x, Y(1), fill="#5a5a5a", width=1)
+        marker_dot = canvas.create_oval(
+            marker_x - 2, marker_y - 2, marker_x + 2, marker_y + 2,
+            fill="#e0e0e0", outline="")
+        self._motor_marker[key] = (marker_line, marker_dot)
+
+        low_out = (max_pct / 100.0 if low <= 0 else
+                   motor_band_output(low / 100.0, max_pct, tlo, low, high, thi))
+        high_out = motor_band_output(high / 100.0, max_pct, tlo, low, high, thi)
+        handles = {
+            "tlo": (X(tlo), Y(0)),
+            "thi": (X(thi), Y(0)),
+            "low": (X(low), Y(low_out)),
+            "high": (X(high), Y(high_out)),
+            "max": (cap_x, cap_y),
+        }
+        selected = self._motor_selected.get(key)
+        for kind, (x, y) in handles.items():
+            if selected == kind:
+                canvas.create_oval(x - 7, y - 7, x + 7, y + 7,
+                                   outline="#ffffff")
+            if kind in ("tlo", "thi"):
+                canvas.create_oval(x - 3, y - 3, x + 3, y + 3,
+                                   outline=color, fill="#1b1b1b", width=2)
+            elif kind in ("low", "high"):
+                canvas.create_oval(x - 4, y - 4, x + 4, y + 4,
+                                   fill=color, outline="#0b0b0b")
+            else:
+                canvas.create_polygon(x, y - 5, x + 5, y, x, y + 5, x - 5, y,
+                                      fill=color, outline="#ffffff")
+        self._motor_handle_pos[key] = handles
+        self._motor_geom[key] = (L, R, T, B, plot_w, plot_h)
+
+        spin = self._motor_spin.get(key)
+        if spin is not None:
+            self._motor_spin_window[key] = canvas.create_window(
+                w - 4, 1, anchor="ne", window=spin)
+
+        self._update_motor_markers()
+
+    def _update_motor_markers(self):
+        mag = abs(float(self.telemetry.get("ffb_torque", 0.0)))
+        mag = max(0.0, min(1.0, mag))
+        for key in ("heavy", "light"):
+            marker = self._motor_marker.get(key)
+            geom = self._motor_geom.get(key)
+            canvas = self._motor_canvas.get(key)
+            if not marker or not geom or canvas is None:
+                continue
+            L, R, T, B, plot_w, plot_h = geom
+            x = L + mag * plot_w
+            max_pct, tlo, low, high, thi = self._motor_values(key)
+            out = motor_band_output(mag, max_pct, tlo, low, high, thi)
+            y = T + (1.0 - out) * plot_h
+            line_id, dot_id = marker
+            try:
+                canvas.coords(line_id, x, T, x, T + plot_h)
+                canvas.coords(dot_id, x - 2, y - 2, x + 2, y + 2)
+            except Exception:
+                pass
+
+        if self.sim_scenario and hasattr(self, "sim_ffb_var"):
+            self._sim_scale_updating = True
+            try:
+                self.sim_ffb_var.set(mag * 100.0)
+                self.sim_value_label.config(text=f"{int(round(mag * 100))}%")
+            except Exception:
+                pass
+            self._sim_scale_updating = False
+
+    def _set_motor_value(self, key, kind, value):
+        value = self._motor_clamp(key, kind, value)
+        if kind == "max":
+            self._motor_last_max[key] = value
+            self._motor_vars[key]["max"].set(value)
+            self._motor_max_text[key].set(str(value))
+        else:
+            self._motor_vars[key][kind].set(value)
+        self._motor_selected[key] = kind
+        self._draw_motor_curve(key)
+        self._snapshot_runtime_config()
+
+    def _on_motor_max_spin(self, key):
+        spin = self._motor_spin.get(key)
+        if spin is None:
+            return
+        try:
+            value = int(round(float(spin.get())))
+        except Exception:
+            value = self._motor_last_max.get(key, 50)
+        value = max(0, min(100, value))
+        self._motor_last_max[key] = value
+        self._motor_vars[key]["max"].set(value)
+        self._motor_max_text[key].set(str(value))
+        self._motor_selected[key] = "max"
+        self._draw_motor_curve(key)
+        self._snapshot_runtime_config()
+
+    def _on_motor_press(self, key, event):
+        handles = self._motor_handle_pos.get(key, {})
+        if not handles:
+            return
+        candidates = []
+        for kind, (x, y) in handles.items():
+            dist = (event.x - x) ** 2 + (event.y - y) ** 2
+            if dist <= 14 * 14:
+                candidates.append((dist, kind))
+        if not candidates:
+            return
+        candidates.sort()
+        self._motor_drag = {
+            "key": key,
+            "kind": candidates[0][1],
+            "cands": [kind for _dist, kind in candidates],
+            "picked": False,
+        }
+        self._motor_selected[key] = candidates[0][1]
+        self._draw_motor_curve(key)
+
+    def _on_motor_motion(self, key, event):
+        drag = self._motor_drag
+        if not drag or drag.get("key") != key:
+            return
+        geom = self._motor_geom.get(key)
+        if not geom:
+            return
+        L, R, T, B, plot_w, plot_h = geom
+        vx = int(round(max(0.0, min(1.0, (event.x - L) / max(1.0, plot_w))) * 100))
+        vy = int(round(max(0.0, min(1.0, 1.0 - (event.y - T) / max(1.0, plot_h))) * 100))
+        kind = drag["kind"]
+        if not drag["picked"]:
+            for candidate in drag["cands"]:
+                value = vy if candidate == "max" else vx
+                if (self._motor_clamp(key, candidate, value)
+                        != self._motor_value(key, candidate)):
+                    kind = candidate
+                    drag["kind"] = candidate
+                    drag["picked"] = True
+                    break
+        value = vy if kind == "max" else vx
+        self._set_motor_value(key, kind, value)
+
+    def _on_motor_release(self, key, event):
+        self._motor_drag = None
+
+    def _on_motor_double(self, key, event):
+        handles = self._motor_handle_pos.get(key, {})
+        if not handles:
+            return
+        nearest = None
+        best = 14 * 14
+        for kind, (x, y) in handles.items():
+            dist = (event.x - x) ** 2 + (event.y - y) ** 2
+            if dist <= best:
+                best = dist
+                nearest = kind
+        if nearest is None:
+            return
+        motor = "Heavy" if key == "heavy" else "Light"
+        label = self._MOTOR_LABELS.get(nearest, nearest)
+        try:
+            value = simpledialog.askinteger(
+                "Motor band",
+                f"{motor} {label} ({0}-{100}%):",
+                initialvalue=self._motor_value(key, nearest),
+                minvalue=0, maxvalue=100, parent=self.root)
+        except Exception:
+            value = None
+        if value is not None:
+            self._set_motor_value(key, nearest, value)
+
+    def _scenario_key(self):
+        try:
+            index = int(self.scenario_combo.current())
+        except Exception:
+            index = 0
+        if index < 0 or index >= len(MOTOR_SCENARIOS):
+            index = 0
+        return MOTOR_SCENARIOS[index][1]
+
+    def _flash_status(self, text, color, ms=3000):
+        self.status_label.config(text=text, foreground=color)
+        if self.status_restore_timer:
+            try:
+                self.root.after_cancel(self.status_restore_timer)
+            except Exception:
+                pass
+        self.status_restore_timer = self.root.after(ms, self._restore_status_label)
+
+    def _start_scenario(self):
+        self._find_test_controller()
+        self.sim_scenario_t0 = time.perf_counter()
+        self.sim_scenario = self._scenario_key()
+        self.sim_ffb_enabled = False
+        self.sim_ffb = 0.0
+        self.sim_play_btn.config(text="Stop")
+
+    def _toggle_scenario(self):
+        if self.sim_scenario:
+            self._stop_sim()
+        else:
+            self._start_scenario()
+
+    def _on_scenario_change(self, event=None):
+        if self.sim_scenario:
+            self._start_scenario()
+
+    def _stop_sim(self, silent=False):
+        had_effect = bool(self.sim_scenario or self.sim_ffb_enabled)
+        self.sim_scenario = None
+        self.sim_ffb_enabled = False
+        self.sim_ffb = 0.0
+        self.sim_scenario_t0 = 0.0
+        if not self.running:
+            self._zero_offline_rumble()
+        if hasattr(self, "sim_play_btn"):
+            self.sim_play_btn.config(text="Play")
+        if had_effect and not silent:
+            self._flash_status("Status: Live FFB", "#00E5FF", 2500)
+
+    def _on_sim_slider(self, value):
+        if self._sim_scale_updating:
+            return
+        try:
+            value = max(0.0, min(100.0, float(value)))
+        except Exception:
+            return
+        if self.sim_scenario:
+            current = abs(float(self.telemetry.get("ffb_torque", 0.0))) * 100.0
+            if abs(value - current) < 1.5:
+                return
+        if hasattr(self, "sim_value_label"):
+            self.sim_value_label.config(text=f"{int(round(value))}%")
+        if not self.sim_ffb_enabled and not self.sim_scenario:
+            self._find_test_controller()
+        self.sim_scenario = None
+        self.sim_scenario_t0 = 0.0
+        self.sim_ffb_enabled = True
+        self.sim_ffb = value / 100.0
+        if hasattr(self, "sim_play_btn"):
+            self.sim_play_btn.config(text="Play")
+
+    def _find_test_controller(self):
+        """Pick the controller slot used by the offline test output."""
+        slot = self.controller_combo.get() if hasattr(self, "controller_combo") else "Auto-Detect"
+        if slot != "Auto-Detect":
+            try:
+                self.active_controller_index = int(slot.split("Slot ")[1][0])
+                return
+            except Exception:
+                pass
+        for index in range(4):
+            try:
+                XInput.get_state(index)
+                self.active_controller_index = index
+                return
+            except Exception:
+                continue
+
+    def _zero_offline_rumble(self):
+        try:
+            XInput.set_vibration(self.active_controller_index, 0, 0)
+        except Exception:
+            pass
+        self._last_rumble_values = (0.0, 0.0)
+
+    def _drive_offline_test_rumble(self, now):
+        """Drive the motors from the test slider/scenarios when not running.
+
+        The process loop owns the outputs while the wheel is running, so this
+        only runs when it is stopped. It also covers a short Test pulse.
+        """
+        if self.running:
+            return
+        if now < self.test_rumble_until:
+            heavy = max(0.0, min(1.0, self.test_heavy_val))
+            light = max(0.0, min(1.0, self.test_light_val))
+            force = max(heavy, light)
+        else:
+            force = self._simulated_force(now)
+            if force is None:
+                if self._last_rumble_values != (0.0, 0.0):
+                    self._zero_offline_rumble()
+                if (self.telemetry["ffb_torque"] or self.telemetry["heavy_rumble"]
+                        or self.telemetry["light_rumble"]):
+                    self.telemetry["ffb_torque"] = 0.0
+                    self.telemetry["heavy_rumble"] = 0.0
+                    self.telemetry["light_rumble"] = 0.0
+                return
+            heavy, light = self._band_outputs(self._runtime_cfg, force)
+        self.telemetry["ffb_torque"] = force
+        self.telemetry["heavy_rumble"] = heavy
+        self.telemetry["light_rumble"] = light
+        try:
+            XInput.set_vibration(self.active_controller_index, heavy, light)
+            self._last_rumble_values = (heavy, light)
+        except Exception:
+            pass
 
     # ----------------- CONFIG PERSISTENCE (settings.ini) -----------------
     def _migrate_settings(self):
@@ -1893,8 +2469,16 @@ class UniversalWheelApp:
             "gamma": f"{cfg['gamma']:.8f}",
             "speed_limit": f"{cfg['speed_limit']:.8f}",
             "deadzone": f"{cfg['deadzone']:.8f}",
-            "heavy_gain": f"{cfg['heavy_gain']:.8f}",
-            "light_gain": f"{cfg['light_gain']:.8f}",
+            "heavy_max": str(cfg["heavy_max"]),
+            "heavy_tlo": str(cfg["heavy_tlo"]),
+            "heavy_low": str(cfg["heavy_low"]),
+            "heavy_high": str(cfg["heavy_high"]),
+            "heavy_thi": str(cfg["heavy_thi"]),
+            "light_max": str(cfg["light_max"]),
+            "light_tlo": str(cfg["light_tlo"]),
+            "light_low": str(cfg["light_low"]),
+            "light_high": str(cfg["light_high"]),
+            "light_thi": str(cfg["light_thi"]),
             "invert_throttle": str(cfg["invert_throttle"]),
             "invert_brake": str(cfg["invert_brake"]),
             "rs_buttons_enabled": str(cfg["rs_buttons"]),
@@ -1964,6 +2548,13 @@ class UniversalWheelApp:
                 except Exception:
                     return default
 
+            def get_int(key, default, low, high):
+                try:
+                    value = int(round(float(sec.get(key, default))))
+                except Exception:
+                    value = int(default)
+                return max(low, min(high, value))
+
             set_combo(self.controller_combo, "controller_slot")
             set_combo(self.mode_combo, "steering_mode")
             set_combo(self.polling_combo, "polling_rate")
@@ -1977,8 +2568,22 @@ class UniversalWheelApp:
             self.gamma_var.set(get_float("gamma", 1.30, 1.0, 2.5))
             self.speed_var.set(get_float("speed_limit", 0.15, 0.01, 0.30))
             self.deadzone_var.set(get_float("deadzone", 0.15, 0.0, 0.95))
-            self.heavy_gain_var.set(get_float("heavy_gain", 0.10, 0.0, 1.0))
-            self.light_gain_var.set(get_float("light_gain", 0.50, 0.0, 1.0))
+            for key, defaults in (
+                    ("heavy", (50, 60, 100, 100, 100)),
+                    ("light", (100, 0, 100, 100, 100))):
+                default_max, default_tlo, default_low, default_high, default_thi = defaults
+                tlo = get_int(f"{key}_tlo", default_tlo, 0, 100)
+                low = get_int(f"{key}_low", default_low, tlo, 100)
+                high = get_int(f"{key}_high", default_high, low, 100)
+                thi = get_int(f"{key}_thi", default_thi, high, 100)
+                max_pct = get_int(f"{key}_max", default_max, 0, 100)
+                self._motor_vars[key]["max"].set(max_pct)
+                self._motor_vars[key]["tlo"].set(tlo)
+                self._motor_vars[key]["low"].set(low)
+                self._motor_vars[key]["high"].set(high)
+                self._motor_vars[key]["thi"].set(thi)
+                self._motor_last_max[key] = max_pct
+                self._motor_max_text[key].set(str(max_pct))
             self.invert_throttle_var.set(get_bool("invert_throttle", False))
             self.invert_brake_var.set(get_bool("invert_brake", False))
             self.rs_buttons_var.set(get_bool("rs_buttons_enabled", True))
@@ -1986,6 +2591,8 @@ class UniversalWheelApp:
             self._minimize_to_tray = get_bool("minimize_to_tray", False)
 
             self._on_slider_change()
+            self._draw_motor_curve("heavy")
+            self._draw_motor_curve("light")
             if self.ffb_debug_var.get():
                 self._on_ffb_debug_toggle()
         except Exception as exc:
@@ -2016,8 +2623,16 @@ class UniversalWheelApp:
                 "gamma": clamp(self.gamma_var.get(), 1.0, 2.5),
                 "speed_limit": clamp(self.speed_var.get(), 0.01, 0.30),
                 "deadzone": clamp(self.deadzone_var.get(), 0.0, 0.95),
-                "heavy_gain": clamp(self.heavy_gain_var.get(), 0.0, 1.0),
-                "light_gain": clamp(self.light_gain_var.get(), 0.0, 1.0),
+                "heavy_max": int(clamp(self._motor_vars["heavy"]["max"].get(), 0, 100)),
+                "heavy_tlo": int(clamp(self._motor_vars["heavy"]["tlo"].get(), 0, 100)),
+                "heavy_low": int(clamp(self._motor_vars["heavy"]["low"].get(), 0, 100)),
+                "heavy_high": int(clamp(self._motor_vars["heavy"]["high"].get(), 0, 100)),
+                "heavy_thi": int(clamp(self._motor_vars["heavy"]["thi"].get(), 0, 100)),
+                "light_max": int(clamp(self._motor_vars["light"]["max"].get(), 0, 100)),
+                "light_tlo": int(clamp(self._motor_vars["light"]["tlo"].get(), 0, 100)),
+                "light_low": int(clamp(self._motor_vars["light"]["low"].get(), 0, 100)),
+                "light_high": int(clamp(self._motor_vars["light"]["high"].get(), 0, 100)),
+                "light_thi": int(clamp(self._motor_vars["light"]["thi"].get(), 0, 100)),
                 "invert_throttle": bool(self.invert_throttle_var.get()),
                 "invert_brake": bool(self.invert_brake_var.get()),
                 "rs_buttons": bool(self.rs_buttons_var.get()),
@@ -2787,8 +3402,6 @@ class UniversalWheelApp:
         self.max_arc_label.config(text=f"{int(self.max_arc_var.get())}°")
         self.whip_width_label.config(text=f"{int(self.whip_width_var.get())}°")
         self.whip_radius_label.config(text=f"{self.whip_radius_var.get():.2f}")
-        self.heavy_gain_label.config(text=f"{int(self.heavy_gain_var.get() * 100)}%")
-        self.light_gain_label.config(text=f"{int(self.light_gain_var.get() * 100)}%")
         if hasattr(self, "_curve_line_id"):
             self._rebuild_curve()
         if hasattr(self, "_gate_dot_id"):
@@ -2798,12 +3411,17 @@ class UniversalWheelApp:
         self._snapshot_runtime_config()
 
     def pulse_rumble(self, heavy=True, light=True):
-        self.test_heavy_val = self.heavy_gain_var.get() if heavy else 0.0
-        self.test_light_val = self.light_gain_var.get() if light else 0.0
+        self.test_heavy_val = (self._motor_vars["heavy"]["max"].get() / 100.0) if heavy else 0.0
+        self.test_light_val = (self._motor_vars["light"]["max"].get() / 100.0) if light else 0.0
         self.test_rumble_until = time.perf_counter() + 0.4
+        self._find_test_controller()
         # While running, the process loop owns XInput output so it cannot be
         # overwritten by a competing test thread.
         if self.running and self._controller_connected:
+            return
+        # When an offline scenario or slider is active, the GUI tick drives the
+        # pulse so it does not fight the test output.
+        if not self.running and (self.sim_ffb_enabled or self.sim_scenario):
             return
         def _test_thread():
             try:
@@ -2836,6 +3454,13 @@ class UniversalWheelApp:
 
     def _update_health_label(self):
         if not hasattr(self, "ffb_health_label"):
+            return
+        if self.sim_scenario:
+            self._set_health_text("Simulated FFB · test scenario running")
+            return
+        if self.sim_ffb_enabled:
+            self._set_health_text(
+                f"Simulated FFB · slider {int(round(self.sim_ffb * 100))}%")
             return
         source = self.ffb_source_combo.get()
         if "Assetto Corsa" in source:
@@ -2893,6 +3518,8 @@ class UniversalWheelApp:
                     self.root.withdraw()
                 except Exception:
                     pass
+            if not self.running:
+                self._zero_offline_rumble()
             self._idle_mode = True
             self._unfocused_since = None
             self.root.after(200, self._start_gui_loop)
@@ -2909,7 +3536,8 @@ class UniversalWheelApp:
             if self._unfocused_since is None:
                 self._unfocused_since = now
             self._idle_mode = (now - self._unfocused_since) >= 2.0
-        delay = 200 if self._idle_mode else 33
+        offline_test = (not self.running) and (self.sim_scenario or self.sim_ffb_enabled)
+        delay = 33 if (offline_test or not self._idle_mode) else 200
 
         self._gui_tick_count += 1
         if self._gui_tick_last:
@@ -2936,6 +3564,7 @@ class UniversalWheelApp:
             self.deconflict_label.config(text=deconflict_text)
 
         self._update_ffb_source_label()
+        self._drive_offline_test_rumble(now)
 
         self.draw_bar(self.throttle_bar, self.telemetry["throttle"] * 100)
         self.draw_bar(self.brake_bar, self.telemetry["brake"] * 100)
@@ -2945,6 +3574,7 @@ class UniversalWheelApp:
         self.draw_wheel_gauge(self.telemetry["steer"])
         self.draw_gate_vis(self.telemetry["raw_x"], self.telemetry["raw_y"])
         self.draw_curve(self.telemetry["unfiltered_steer"], self.telemetry["steer"])
+        self._update_motor_markers()
 
         inp = self.live_input_state
         self.draw_controller_vis(
@@ -2965,12 +3595,12 @@ class UniversalWheelApp:
         if self._capture_error:
             error = self._capture_error
             self._capture_error = None
-            self.capture_btn.config(state="normal", text="Capture FFB 10s")
+            self.capture_btn.config(state="normal", text="Capture 10s")
             self.status_label.config(text=f"Status: FFB capture failed: {error}", foreground="#ff6666")
         elif self._capture_done_path:
             path = self._capture_done_path
             self._capture_done_path = None
-            self.capture_btn.config(state="normal", text="Capture FFB 10s")
+            self.capture_btn.config(state="normal", text="Capture 10s")
             self.status_label.config(
                 text=f"Status: FFB capture saved: {os.path.basename(path)}",
                 foreground="#00E5FF"
@@ -3217,60 +3847,89 @@ class UniversalWheelApp:
         with self._ac_lock:
             self._release_ac_shm_locked()
 
+    def _simulated_force(self, now):
+        """Return the test FFB magnitude, or None when live FFB should be used."""
+        scenario = self.sim_scenario
+        if scenario:
+            return scenario_force(scenario, now - self.sim_scenario_t0)
+        if self.sim_ffb_enabled:
+            return max(0.0, min(1.0, float(self.sim_ffb)))
+        return None
+
+    def _band_outputs(self, cfg, force):
+        """Map a 0..1 FFB magnitude through both motor bands."""
+        heavy = motor_band_output(
+            force,
+            cfg.get("heavy_max", 50),
+            cfg.get("heavy_tlo", 60),
+            cfg.get("heavy_low", 100),
+            cfg.get("heavy_high", 100),
+            cfg.get("heavy_thi", 100))
+        light = motor_band_output(
+            force,
+            cfg.get("light_max", 100),
+            cfg.get("light_tlo", 0),
+            cfg.get("light_low", 100),
+            cfg.get("light_high", 100),
+            cfg.get("light_thi", 100))
+        return min(1.0, heavy), min(1.0, light)
+
     def _compute_rumble_outputs(self, cfg, now, wheel_vel=0.0, wheel_acc=0.0):
         if now < self.test_rumble_until:
             return self.test_heavy_val, self.test_light_val
 
-        source = cfg.get("ffb_source", "DirectInput Rich")
-        if "Assetto Corsa" in source:
-            self.current_ffb_torque = self._read_ac_ffb(now)
+        sim = self._simulated_force(now)
+        if sim is not None:
+            self.current_ffb_torque = max(0.0, min(1.0, sim))
         else:
-            with self._ffb_lock:
-                blocks = list(self._ffb_blocks.values())
-                all_sum = 0.0
-                load_sum = 0.0
-                texture_sum = 0.0
-                has_load = False
-                has_texture = False
-                for block in blocks:
-                    if not block.get("axis_x", True):
-                        continue
-                    force = self._block_force_locked(block, now, self.current_wheel_pos, wheel_vel, wheel_acc)
-                    all_sum += force
-                    if block.get("type") in (ET_CONST, ET_RAMP, ET_SPRNG, ET_DMPR, ET_INRT, ET_FRCTN):
-                        load_sum += force
-                        has_load = True
-                    elif block.get("constant") is not None or block.get("condition_x") is not None:
-                        load_sum += force
-                        has_load = True
+            source = cfg.get("ffb_source", "DirectInput Rich")
+            if "Assetto Corsa" in source:
+                self.current_ffb_torque = self._read_ac_ffb(now)
+            else:
+                with self._ffb_lock:
+                    blocks = list(self._ffb_blocks.values())
+                    all_sum = 0.0
+                    load_sum = 0.0
+                    texture_sum = 0.0
+                    has_load = False
+                    has_texture = False
+                    for block in blocks:
+                        if not block.get("axis_x", True):
+                            continue
+                        force = self._block_force_locked(block, now, self.current_wheel_pos, wheel_vel, wheel_acc)
+                        all_sum += force
+                        if block.get("type") in (ET_CONST, ET_RAMP, ET_SPRNG, ET_DMPR, ET_INRT, ET_FRCTN):
+                            load_sum += force
+                            has_load = True
+                        elif block.get("constant") is not None or block.get("condition_x") is not None:
+                            load_sum += force
+                            has_load = True
+                        else:
+                            texture_sum += force
+                            has_texture = True
+                    # Legacy raw sources use the most recent active constant
+                    # block. Never fall back to a stopped/freed block or a stale
+                    # raw value after pause/reset.
+                    active_constants = [
+                        b["constant"] for b in blocks
+                        if b.get("playing", True) and b.get("constant") is not None
+                    ]
+                    raw = active_constants[-1] if active_constants else 0.0
+                    if self._ffb_paused or not self._ffb_actuators_enabled:
+                        raw = 0.0
+                    if "DirectInput Rich" in source:
+                        torque = all_sum if blocks else raw
+                    elif "DirectInput Cartesian" in source:
+                        torque = raw
+                    elif "DirectInput Polar" in source:
+                        sign = -1.0 if (180.0 <= self.ffb_direction_deg < 360.0) else 1.0
+                        torque = sign * abs(raw)
                     else:
-                        texture_sum += force
-                        has_texture = True
-                # Legacy raw sources use the most recent active constant
-                # block. Never fall back to a stopped/freed block or a stale
-                # raw value after pause/reset.
-                active_constants = [
-                    b["constant"] for b in blocks
-                    if b.get("playing", True) and b.get("constant") is not None
-                ]
-                raw = active_constants[-1] if active_constants else 0.0
-                if self._ffb_paused or not self._ffb_actuators_enabled:
-                    raw = 0.0
-                if "DirectInput Rich" in source:
-                    torque = all_sum if blocks else raw
-                elif "DirectInput Cartesian" in source:
-                    torque = raw
-                elif "DirectInput Polar" in source:
-                    sign = -1.0 if (180.0 <= self.ffb_direction_deg < 360.0) else 1.0
-                    torque = sign * abs(raw)
-                else:
-                    torque = load_sum if has_load else (texture_sum if has_texture else raw)
-                self.current_ffb_torque = max(-1.0, min(1.0, torque))
+                        torque = load_sum if has_load else (texture_sum if has_texture else raw)
+                    self.current_ffb_torque = max(-1.0, min(1.0, torque))
 
         torque_mag = abs(self.current_ffb_torque)
-        heavy_output = min(1.0, torque_mag * cfg.get("heavy_gain", 1.0))
-        light_output = min(1.0, torque_mag * cfg.get("light_gain", 1.0))
-        return heavy_output, light_output
+        return self._band_outputs(cfg, torque_mag)
 
     # ----------------- VJOY OUTPUT & CONTROLLER HELPERS -----------------
     def _neutral_values(self):
@@ -3489,6 +4148,7 @@ class UniversalWheelApp:
         else:
             self._stop_event.set()
             self.running = False
+            self._stop_sim(silent=True)
             self.toggle_btn.config(text="Start Virtual Wheel")
             if self._worker_thread and self._worker_thread.is_alive():
                 self._worker_thread.join(timeout=1.0)

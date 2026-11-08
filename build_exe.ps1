@@ -6,6 +6,13 @@ Set-StrictMode -Version Latest
 $root = $PSScriptRoot
 Set-Location $root
 
+$versionLine = Select-String -Path "$root\virtual_wheel_vjoy.py" -Pattern '^__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
+if (-not $versionLine) {
+    throw "Could not read __version__ from virtual_wheel_vjoy.py"
+}
+$version = $versionLine.Matches[0].Groups[1].Value
+$name = "VirtualWheel_v$version"
+
 $arch = python -c "import struct; print(struct.calcsize('P') * 8)"
 if ($arch -ne "64") {
     throw "A 64-bit Python is required to build the 64-bit Virtual Wheel executable."
@@ -14,14 +21,14 @@ if ($arch -ne "64") {
 Write-Host "Installing/updating build dependencies..."
 python -m pip install --upgrade -r "$root\requirements.txt"
 
-Write-Host "Building dist\VirtualWheel.exe ..."
+Write-Host "Building dist\$name.exe (version $version) ..."
 python -m PyInstaller `
     --noconfirm `
     --clean `
     --onefile `
     --noconsole `
     --noupx `
-    --name "VirtualWheel" `
+    --name $name `
     --icon "$root\assets\virtual_wheel.ico" `
     --hidden-import "XInput" `
     --hidden-import "pystray._win32" `
@@ -33,7 +40,7 @@ python -m PyInstaller `
     --specpath "$root" `
     "$root\virtual_wheel_vjoy.py"
 
-$exe = Join-Path $root "dist\VirtualWheel.exe"
+$exe = Join-Path $root "dist\$name.exe"
 if (-not (Test-Path $exe)) {
     throw "PyInstaller did not produce $exe"
 }

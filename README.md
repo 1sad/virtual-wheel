@@ -10,7 +10,7 @@ Gives you a way better and more intuitive control and feedback.
 
 ## Download
 
-Grab `VirtualWheel.exe` from
+Grab `VirtualWheel_v1.1.0.exe` from
 [Releases](https://github.com/1sad/virtual-wheel/releases/latest). 
 Install vJoy from
 [BrunnerInnovation vJoy](https://github.com/BrunnerInnovation/vJoy/releases)
@@ -43,10 +43,15 @@ You can also do this from a command prompt:
 
 ## Start
 
-Default settings should be alright. 
+Default settings should be alright. The rumble bands are a starting point,
+not a fixed recommendation.
 
 Press "Start Virtual Wheel" at the bottom, and move the stick around 
 while looking at the Steering Wheel Angle bar to see what they do.
+
+The two graphs at the bottom left are the FFB to rumble response. Move the
+Sim FFB slider under the telemetry bars to check how the motors respond
+before you start a game, and lower either max strength if it is too much.
 
 The status bar at the bottom tells you if vJoy was acquired and whether FFB is
 coming in.
@@ -93,17 +98,46 @@ wedge is the anti-whip zone, and the orange dot is the stick.
 
 ### FFB to rumble
 
-The game sends force feedback to the vJoy wheel. The app parses those reports and
-splits the result into a heavy motor and a light motor.
+The game sends force feedback to the vJoy wheel. The app turns the current
+force strength into a response for each controller motor. Each motor has its
+own part of the force range, so you can use one motor for the top end and the
+other for the rest.
 
-- **Heavy motor ceiling** and **Light motor ceiling** scale each motor. Keep them
-  low to start with, since strong FFB on a small controller gets uncomfortable
-  fast.
-- **Test Heavy** and **Test Light** pulse each motor so you can check the wiring
-  without starting a game.
-- **Capture FFB 10s** writes every raw packet to a log file next to
-  `settings.ini`. That is what to attach to a bug report if a game's FFB is not
-  working.
+The two graphs at the bottom left show the actual response:
+
+- The horizontal axis is FFB strength, 0 to 100%.
+- The vertical axis is that motor's output, 0 to 100%.
+- The two small markers on the bottom set where the motor starts and stops.
+  The two round markers set where it reaches full strength. Drag them
+  sideways. The ramps between the bottom and round markers are the tapers.
+- The diamond in the right-hand rail sets max strength. The spinbox beside
+  `max` accepts an exact number, and double-clicking any marker opens an exact
+  value prompt.
+- The faint purple line is a 1:1 reference. It shows what the output would be
+  if it followed the force directly.
+- Flat cap means the motor runs at max strength between the two full markers.
+  It does not scale down with the force inside that part.
+
+Defaults are Heavy `on 60-100, full 100-100, max 50` and Light
+`on 0-100, full 100-100, max 100`. Heavy is a ramp for the top part of the
+force range. Light is a direct 1:1 ramp at full strength. Lower either max if
+the motors are too strong for your hands.
+
+The test tools sit under the telemetry bars:
+
+- **Scenario** runs a synthetic FFB pattern through the same motor mapping.
+  Pick one from the dropdown and press Play: Sweep, Cornering, Oversteer,
+  Curb strikes, Constant vibration and Random vibration. Sweep is the easiest
+  way to place the band edges by ear.
+- **Sim FFB** is a manual 0-100 slider. **Live** returns to the game's FFB.
+- **Test Heavy** and **Test Light** pulse each motor at its max strength.
+- **Capture 10s** writes every raw packet to a log file next to
+  `settings.ini`. That is what to attach to a bug report if a game's FFB is
+  not working.
+
+The scenarios and the Sim FFB slider drive the motors even when the virtual
+wheel is stopped, so you can tune the bands without a game. While the wheel is
+running, the live FFB takes over again when you press Live.
 
 ### FFB source
 
@@ -140,7 +174,8 @@ Closing the window with the X button quits the app.
 Settings are written to `settings.ini` next to the EXE. If that folder is
 read-only, for example when the EXE sits in `Program Files`, the app uses
 `%APPDATA%\VirtualWheel\settings.ini` instead. A source run keeps using the
-`settings.ini` beside the script.
+`settings.ini` beside the script. Each motor's four band edges and max strength
+are stored in the same file.
 
 ## Games
 
@@ -161,7 +196,7 @@ actually tested in the game.
 The usual LMU community advice is to set **Use Constant Steering Force Effect =
 Off**. This app currently needs it **On**, otherwise LMU's FFB can be silent. It
 is a parser limitation, not a tuning problem. If you want to help, set it to Off,
-click **Capture FFB 10s** while driving, and attach the log to an issue.
+click **Capture 10s** while driving, and attach the log to an issue.
 
 ## Known issues
 
@@ -211,8 +246,10 @@ To build the EXE:
 .\build_exe.ps1
 ```
 
-That installs the pinned build dependencies and writes `dist\VirtualWheel.exe`.
-PyInstaller runs with `--onefile --noconsole` and embeds
+That installs the pinned build dependencies and writes
+`dist\VirtualWheel_v<version>.exe`, for example
+`dist\VirtualWheel_v1.1.0.exe`. The version comes from `__version__` in
+`virtual_wheel_vjoy.py`. PyInstaller runs with `--onefile --noconsole` and embeds
 `assets/virtual_wheel.ico` as the executable icon. The vJoy driver is never
 bundled.
 

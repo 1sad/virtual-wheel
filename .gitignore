@@ -6,5 +6,6 @@ dist/
 ffb_capture_*.log
 .venv/
 
-# Local development log, not part of the published repo
+# Local development log and session handoff, not part of the published repo
 PROGRESS.md
+HANDOFF.md
